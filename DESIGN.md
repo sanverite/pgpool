@@ -165,6 +165,7 @@ type Proxy interface {
 
 ### 6.4 Deployment on anton
 
+```
 anton (bare metal)
 ├── systemd
 │ └── pgpool.service # Restart=always, starts on boot
@@ -172,6 +173,7 @@ anton (bare metal)
 │ └── pgpool.toml # config file
 └── /usr/local/bin/
 └── pgpool # the binary
+```
 
 Apps on k3s connect to anton's Tailscale IP on port 5433.
 pgpool forwards to Postgres on port 5432 on the same machine
@@ -209,6 +211,7 @@ port = 9090
 
 ## 8. Metrics exposed
 
+```
 pgpool_client_connections_total # total clients connected
 pgpool_pool_size # configured pool size
 pgpool_pool_active # connections currently in use
@@ -217,6 +220,7 @@ pgpool_queue_depth # clients currently waiting
 pgpool_queue_timeout_total # clients rejected due to timeout
 pgpool_backend_errors_total # backend connection failures
 pgpool_query_duration_seconds # histogram of query durations
+```
 
 ---
 
@@ -243,10 +247,12 @@ WantedBy=multi-user.target
 
 ## 10. Build and deploy
 
+```
 make build # build binary
 make test # run tests
 make race # run tests with race detector
 make deploy # scp binary to anton, restart systemd service
+```
 
 ---
 
