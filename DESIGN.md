@@ -1,7 +1,7 @@
 # DESIGN.md — pgpool
 
 ## Status
-Draft
+ACCEPTED
 
 ## Author
 Sankalp
