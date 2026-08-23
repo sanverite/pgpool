@@ -170,3 +170,156 @@ func readCString(b []byte) (string, []byte, error) {
 
 	return "", nil, fmt.Errorf("no null terminator found in string")
 }
+
+// MessageType represents a single byte Postgres message type identifier.
+// Every message except the startup message starts with one of these.
+type MessageType byte
+
+const (
+	// Server -> Client messages
+	MessageTypeAuthRequest     MessageType = 'R'
+	MessageTypeParameterStatus MessageType = 'S'
+	MessageTypeBackendKeyData  MessageType = 'K'
+	MessageTypeReadyForQuery   MessageType = 'Z'
+	MessageTypeErrorResponse   MessageType = 'E'
+
+	// Client -> Server messages
+	MessageTypeQuery     MessageType = 'Q'
+	MessageTypeTerminate MessageType = 'X'
+)
+
+// AuthType represents the type of authenticator requested.
+type AuthType uint32
+
+const (
+	AuthTypeOK                AuthType = 0 // authentication successful
+	AuthTypeClearTextPassword AuthType = 3 // send plaintext password
+	AuthTypeMD5Password       AuthType = 5 // send MD5 hashed password
+)
+
+// ReadyStatus represents the transaction status byte in ReadyForQuery.
+type ReadyStatus byte
+
+const (
+	ReadyStatusIdle        ReadyStatus = 'I' // idle, not in transaction
+	ReadyStatusTransaction ReadyStatus = 'T' // inside a transaction
+	ReadyStatusError       ReadyStatus = 'E' // inside a failed transaction
+)
+
+// WriteAuthenticationOK sends an AuthenticationOK message to w.
+// This tells the client that authentication succeeded.
+//
+// Format:
+//
+//	┌─────────────────────────────────┐
+//	│ Type    │ 1 byte  │ 'R'         │
+//	│ Length  │ 4 bytes │ 8           │
+//	│ AuthType│ 4 bytes │ 0 (success) │
+//	└─────────────────────────────────┘
+func WriteAuthenticationOK(w io.Writer) error {
+	// Total message: 1 (type) + 4 (length) + 4 (auth type) = 9 bytes.
+	// Length field value = 8 (excludes the type byte, includes itself).
+	buf := []byte{
+		byte(MessageTypeAuthRequest),
+		0, 0, 0, 8, // length = 8
+		0, 0, 0, 0, // auth type = 0 (ok)
+	}
+
+	if _, err := w.Write(buf); err != nil {
+		return fmt.Errorf("writing authentication ok: %w", err)
+	}
+
+	return nil
+}
+
+// WriteParameterStatus sends a ParameterStatus message to w.
+// Postgres sends one of these for each server parameter after auth.
+// Clients use these to understand server capabilities and settings.
+//
+// Format:
+//
+//	┌──────────────────────────────────────────┐
+//	│ Type    │ 1 byte  │ 'S'                  │
+//	│ Length  │ 4 bytes │ total length          │
+//	│ Name    │ N bytes │ null-terminated string│
+//	│ Value   │ N bytes │ null-terminated string│
+//	└──────────────────────────────────────────┘
+func WriteParameterStatus(w io.Writer, name, value string) error {
+	// Calculate length: 4 (length field) + len(name) + 1 (null) +
+	// 									 len(value) + 1 (null)
+	length := uint32(4 + len(name) + 1 + len(value) + 1)
+
+	buf := make([]byte, 0, 1+4+len(name)+1+len(value)+1)
+	buf = append(buf, byte(MessageTypeParameterStatus))
+	buf = appendUint32(buf, length)
+	buf = append(buf, []byte(name)...)
+	buf = append(buf, 0) // null terminator
+	buf = append(buf, []byte(value)...)
+	buf = append(buf, 0) // null terminator
+
+	if _, err := w.Write(buf); err != nil {
+		return fmt.Errorf("writing parameter status %q: %w", name, err)
+	}
+
+	return nil
+}
+
+// WriteBackendKeyData sends a BackendKeyData message to w.
+// This gives client a PID and secret key it can use to
+// cancel queries. We send fake values - if we sent real backend
+// values, a client could cancel another client's query on a
+// shared backend connection.
+//
+// Format:
+//
+//	┌──────────────────────────────┐
+//	│ Type   │ 1 byte  │ 'K'       │
+//	│ Length │ 4 bytes │ 12        │
+//	│ PID    │ 4 bytes │ process ID│
+//	│ Secret │ 4 bytes │ secret key│
+//	└──────────────────────────────┘
+func WriteBackendKeyData(w io.Writer, pid, secret uint32) error {
+	buf := make([]byte, 0, 13)
+	buf = append(buf, byte(MessageTypeBackendKeyData))
+	buf = appendUint32(buf, 12) // length = 12
+	buf = appendUint32(buf, pid)
+	buf = appendUint32(buf, secret)
+
+	if _, err := w.Write(buf); err != nil {
+		return fmt.Errorf("writing backend key data: %w", err)
+	}
+
+	return nil
+}
+
+// WriteReadyForQuery sends a ReadyForQuery message to w.
+// This is the signal that the server is ready to accept queries.
+// The status byte tells the client the current transaction state.
+//
+// Format:
+//
+//	┌────────────────────────────────────┐
+//	│ Type   │ 1 byte  │ 'Z'             │
+//	│ Length │ 4 bytes │ 5               │
+//	│ Status │ 1 byte  │ 'I', 'T', or 'E'│
+//	└────────────────────────────────────┘
+func WriteReadyForQuery(w io.Writer, status ReadyStatus) error {
+	buf := []byte{
+		byte(MessageTypeReadyForQuery),
+		0, 0, 0, 5, // length = 5
+		byte(status),
+	}
+
+	if _, err := w.Write(buf); err != nil {
+		return fmt.Errorf("writing ready for query: %w", err)
+	}
+
+	return nil
+}
+
+// appendUint32 appends a big-endian uint32 to b and returns the
+// result. Using append instead of binary.Write avoids allocations.
+func appendUint32(b []byte, v uint32) []byte {
+	return append(b, byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
+}
+

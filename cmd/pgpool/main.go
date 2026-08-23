@@ -183,4 +183,64 @@ func handleConn(conn net.Conn) {
 		"application_name", msg.Parameters["application_name"],
 		"protocol_version", msg.ProtocolVersion,
 	)
+
+	// Send AuthenticationOK
+	if err := protocol.WriteAuthenticationOK(conn); err != nil {
+		slog.Error("writing auth ok",
+			"remote_addr", conn.RemoteAddr().String(),
+			"err", err,
+		)
+		return
+	}
+
+	// Send a minimal set of ParameterStatus messages.
+	params := [][2]string{
+		{"server_version", "17.0"},
+		{"client_encoding", "UTF8"},
+		{"DateStyle", "ISO, MDY"},
+		{"TimeZone", "UTC"},
+	}
+
+	for _, p := range params {
+		if err := protocol.WriteParameterStatus(conn, p[0], p[1]); err != nil {
+			slog.Error("writing parameter status",
+				"remote_addr", conn.RemoteAddr().String(),
+				"err", err,
+			)
+			return
+		}
+	}
+
+	// Send fake BackendKeyData.
+	if err := protocol.WriteBackendKeyData(conn, 0, 0); err != nil {
+		slog.Error("writing backend key data",
+			"remote_addr", conn.RemoteAddr().String(),
+			"err", err,
+		)
+		return
+	}
+
+	// Send ReadyForQuery with status 'I' - idle, ready for commands.
+	if err := protocol.WriteReadyForQuery(conn, protocol.ReadyStatusIdle); err != nil {
+		slog.Error("writing ready for query",
+			"remote_addr", conn.RemoteAddr().String(),
+			"err", err,
+		)
+		return
+	}
+
+	slog.Info("client ready",
+		"remote_addr", conn.RemoteAddr().String(),
+		"user", msg.Parameters["user"],
+	)
+
+	// Block until the client disconnects.
+	buf := make([]byte, 4096)
+	for {
+		_, err := conn.Read(buf)
+		if err != nil {
+			// Client disconnected - normal, not an err
+			return
+		}
+	}
 }

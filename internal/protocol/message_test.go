@@ -97,3 +97,23 @@ func TestReadStartupMessageInvalidLength(t *testing.T) {
 		t.Fatal("expected error for invalid length, got nil")
 	}
 }
+
+func TestWriteAuthenticationOk(t *testing.T) {
+	var buf bytes.Buffer
+
+	if err := protocol.WriteAuthenticationOK(&buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := buf.Bytes()
+
+	// Expected exact bytes:
+	// 'R' = 0x52 (message type)
+	// 0x00 0x00 0x00 0x08 (length = 8)
+	// 0x00 0x00 0x00 0x00 (auth type = 0)
+	want := []byte{0x52, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00}
+
+	if !bytes.Equal(got, want) {
+		t.Errorf("wrong bytes\ngot:  %v\nwant: %v", got, want)
+	}
+}
