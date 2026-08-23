@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/sanverite/pgpool/internal/config"
+	"github.com/sanverite/pgpool/internal/protocol"
 )
 
 func main() {
@@ -163,20 +164,23 @@ func handleConn(conn net.Conn) {
 		"remote_addr", conn.RemoteAddr().String(),
 	)
 
-	// Read whatever the client sends into a buffer.
-	// 4096 bytes is a reasonable buffer for a startup message.
-	buf := make([]byte, 4096)
-
-	n, err := conn.Read(buf)
+	// Parse the startup message - the first thing every
+	// Postgres client sends when it connects.
+	msg, err := protocol.ReadStartupMessage(conn)
 	if err != nil {
-		slog.Error("reading from client",
+		slog.Error("reading startup message",
 			"remote_addr", conn.RemoteAddr().String(),
 			"err", err,
 		)
+		return
 	}
 
-	slog.Info("received bytes from client",
+	// Log what client told us about itself.
+	slog.Info("client startup",
 		"remote_addr", conn.RemoteAddr().String(),
-		"bytes", n,
+		"user", msg.Parameters["user"],
+		"database", msg.Parameters["database"],
+		"application_name", msg.Parameters["application_name"],
+		"protocol_version", msg.ProtocolVersion,
 	)
 }
