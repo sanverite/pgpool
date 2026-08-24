@@ -1,0 +1,16 @@
+# Binary output
+bin/
+
+# Go build cache
+*.test
+*.out
+
+# Config files with secrets
+*.toml
+*.json
+!go.sum
+
+# OS files
+.DS_Store
+.idea/
+.vscode/
