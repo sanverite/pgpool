@@ -323,3 +323,73 @@ func appendUint32(b []byte, v uint32) []byte {
 	return append(b, byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
 }
 
+// Message represents a single framed Postgres message.
+type Message struct {
+	Type    MessageType
+	Payload []byte
+}
+
+// ReadMessage reads a single typed message from r.
+// All messages except the startup message follows this format:
+//
+//	┌─────────────────────────────────────┐
+//	│ Type    │ 1 byte  │ message type    │
+//	│ Length  │ 4 bytes │ includes itself │
+//	│ Payload │ N bytes │ message content │
+//	└─────────────────────────────────────┘
+func ReadMessage(r io.Reader) (*Message, error) {
+	// Read the type byte first - tells us what kind of message this is.
+	var typeBuf [1]byte
+	if _, err := io.ReadFull(r, typeBuf[:]); err != nil {
+		return nil, fmt.Errorf("reading message type: %w", err)
+	}
+
+	// Read the 4 byte length field
+	var lengthBuf [4]byte
+	if _, err := io.ReadFull(r, lengthBuf[:]); err != nil {
+		return nil, fmt.Errorf("reading length type: %w", err)
+	}
+
+	// Length includes its own 4 bytes - subtract to get payload size.
+	length := binary.BigEndian.Uint32(lengthBuf[:])
+	if length < 4 {
+		return nil, fmt.Errorf("invalid message length: %d", length)
+	}
+
+	payloadLength := length - 4
+
+	if payloadLength > MaxMessageSize {
+		return nil, fmt.Errorf("message too large: %d bytes", payloadLength)
+	}
+
+	// Read the payload
+	payload := make([]byte, payloadLength)
+	if _, err := io.ReadFull(r, payload); err != nil {
+		return nil, fmt.Errorf("reading message payload: %w", err)
+	}
+
+	return &Message{
+		Type:    MessageType(typeBuf[0]),
+		Payload: payload,
+	}, nil
+}
+
+// QueryString extracts the SQL string from a Query message payload.
+// The payload is a null-terminated string.
+func (m *Message) QueryString() (string, error) {
+	if m.Type != MessageTypeQuery {
+		return "", fmt.Errorf("not a query message: %q", m.Type)
+	}
+
+	if len(m.Payload) == 0 {
+		return "", fmt.Errorf("empty query payload")
+	}
+
+	// Strip the null terminator
+	query := m.Payload
+	if query[len(query)-1] == 0 {
+		query = query[:len(query)-1]
+	}
+
+	return string(query), nil
+}

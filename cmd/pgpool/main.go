@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -234,13 +236,62 @@ func handleConn(conn net.Conn) {
 		"user", msg.Parameters["user"],
 	)
 
-	// Block until the client disconnects.
-	buf := make([]byte, 4096)
+	// Read and handle messages from the client.
 	for {
-		_, err := conn.Read(buf)
+		msg, err := protocol.ReadMessage(conn)
 		if err != nil {
-			// Client disconnected - normal, not an err
+			// io.EOF means the client closed the connection cleanly.
+			// Any other error is unexpected.
+			if errors.Is(err, io.EOF) {
+				return
+			}
+			slog.Error("reading client message",
+				"remote_addr", conn.RemoteAddr().String(),
+				"err", err,
+			)
 			return
+		}
+
+		switch msg.Type {
+
+		case protocol.MessageTypeQuery:
+			// Client sent a query.
+			query, err := msg.QueryString()
+			if err != nil {
+				slog.Error("parsing query",
+					"remote_addr", conn.RemoteAddr().String(),
+					"err", err,
+				)
+				return
+			}
+
+			slog.Info("received query",
+				"remote_addr", conn.RemoteAddr().String(),
+				"query", query,
+			)
+
+			// Send ReadyForQuery so psql shows the prompt again.
+			if err := protocol.WriteReadyForQuery(conn, protocol.ReadyStatusIdle); err != nil {
+				slog.Error("writing ready for query",
+					"remote_addr", conn.RemoteAddr().String(),
+					"err", err,
+				)
+				return
+			}
+
+		case protocol.MessageTypeTerminate:
+			// Client sent 'X' - clean disconnect.
+			slog.Info("client terminated cleanly",
+				"remote_addr", conn.RemoteAddr().String(),
+			)
+			return
+
+		default:
+			// Unkown message type - log and continue.
+			slog.Warn("unkown message type",
+				"remote_addr", conn.RemoteAddr().String(),
+				"type", string(msg.Type),
+			)
 		}
 	}
 }
